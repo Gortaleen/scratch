@@ -91,15 +91,18 @@ const Scratch = (function () {
     );
     contentStr = httpResponse.getContentText();
     const gamePrize = <GamePrize>JSON.parse(contentStr);
-
-    // const gamePrizeArr = Object.keys(gamePrize)
-    //   .filter((key) => key !== "prizeTierInfo")
-    //   .map((key) => {
-    //     return [key, Object.getOwnPropertyDescriptor(gamePrize, key)?.value];
-    //   });
-
     const gamePrizeArr2 = Object.entries(gamePrize);
-    sheet.getRange(1, 1, gamePrizeArr2.length, 2).setValues(gamePrizeArr2);
+    sheet.clearContents();
+    sheet.getRange(1, 1, 6, 2).setValues(gamePrizeArr2.slice(0, 6));
+    sheet.getRange(7, 1, 1).setValue(gamePrizeArr2[6][0]);
+
+    let rowNum = 7;
+    (gamePrizeArr2[6][1] as Array<string>).forEach(function (row) {
+      const rowArr = Object.entries(row);
+      const numRows = rowArr.length;
+      sheet?.getRange(rowNum + 1, 3, numRows, 2).setValues(rowArr);
+      rowNum += numRows + 1;
+    });
 
     // ! delay before making more server requests
     Utilities.sleep(5000);
