@@ -106,7 +106,9 @@ function updateTicketOddsSheet(
   prizeTiersArr: Array<PrizeTier>
 ) {
   const cashValue = prizeTiersArr.reduce(function (acc, prizeTier) {
-    const oddsArr = prizeTier.odds.split("in").map((row) => +row.trim());
+    const oddsArr = prizeTier.odds
+      .split("in")
+      .map((row) => +row.trim().replaceAll(",", ""));
 
     return acc + (oddsArr[0] / oddsArr[1]) * prizeTier.prizeAmount;
   }, 0);
