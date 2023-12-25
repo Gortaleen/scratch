@@ -33,7 +33,7 @@ interface Game {
   gamesLobbyOrder: number;
 }
 
-interface PrizeTiers {
+interface PrizeTier {
   tierNumber: number;
   prizeAmount: number;
   totalPrizes: number;
@@ -51,63 +51,125 @@ interface GamePrize {
   startDate: string;
   ticketCost: number;
   odds: string;
-  prizeTiers: Array<PrizeTiers>;
+  prizeTiers: Array<PrizeTier>;
+}
+
+function pause() {
+  // ! delay before making more server requests
+  Utilities.sleep(2000);
+  return;
+}
+
+function getScratchGames() {
+  const httpResponse = UrlFetchApp.fetch(
+    "https://www.masslottery.com/api/v1/games"
+  );
+  const contentStr = httpResponse.getContentText();
+  const contentJson = <Array<Game>>JSON.parse(contentStr);
+
+  pause();
+
+  return contentJson.filter(
+    (game) => game.gameType.toUpperCase() === "SCRATCH"
+  );
+}
+
+function setupSheets(
+  ss: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  scratchGames: Array<Game>
+) {
+  const gameSheets = ss
+    .getSheets()
+    .filter((sheet) => sheet.getName() !== "Ticket Odds");
+  const ticketOddsSheet = ss.getSheetByName("Ticket Odds");
+  if (!ticketOddsSheet) {
+    throw "Ticket Odds sheet not available";
+  }
+  const tosLastRow = ticketOddsSheet?.getLastRow() - 1;
+  const tosLastCol = ticketOddsSheet?.getLastColumn();
+
+  // start with a clean slate
+  gameSheets.forEach((sheet) => ss.deleteSheet(sheet));
+
+  if (tosLastRow > 0 && tosLastCol > 0) {
+    ticketOddsSheet?.getRange(2, 1, tosLastRow, tosLastCol).clearContent();
+  }
+
+  scratchGames.forEach((game) => ss.insertSheet(game.identifier));
+
+  return ticketOddsSheet;
+}
+
+function updateTicketOddsSheet(
+  ticketOddsSheet: GoogleAppsScript.Spreadsheet.Sheet,
+  gamePrize: GamePrize,
+  prizeTiersArr: Array<PrizeTier>
+) {
+  const cashValue = prizeTiersArr.reduce(function (acc, prizeTier) {
+    const oddsArr = prizeTier.odds.split("in").map((row) => +row.trim());
+
+    return acc + (oddsArr[0] / oddsArr[1]) * prizeTier.prizeAmount;
+  }, 0);
+
+  ticketOddsSheet.appendRow([
+    gamePrize.odds,
+    cashValue,
+    gamePrize.ticketCost,
+    gamePrize.gameName,
+    gamePrize.startDate,
+  ]);
+  return;
+}
+
+function processTicket(
+  game: Game,
+  ss: GoogleAppsScript.Spreadsheet.Spreadsheet,
+  ticketOddsSheet: GoogleAppsScript.Spreadsheet.Sheet
+) {
+  const httpResponse = UrlFetchApp.fetch(
+    "https://www.masslottery.com/api/v1/instant-game-prizes?gameID=" + game.id
+  );
+  const contentStr = httpResponse.getContentText();
+  const gamePrize = <GamePrize>JSON.parse(contentStr);
+  const gamePrizeArr = Object.entries(gamePrize);
+  const prizeTiersArr = gamePrizeArr[6][1] as Array<PrizeTier>;
+  const sheet = ss.getSheetByName(game.identifier);
+  if (!sheet) {
+    throw "Game sheet not available";
+  }
+
+  sheet.getRange(1, 1, 6, 2).setValues(gamePrizeArr.slice(0, 6));
+  // prizeTiers header
+  sheet.getRange(7, 1, 1).setValue(gamePrizeArr[6][0]);
+  // prizeTiers data
+  let rowNum = 7;
+  prizeTiersArr.forEach(function (row) {
+    const rowArr = Object.entries(row);
+    const numRows = rowArr.length;
+    sheet?.getRange(rowNum + 1, 3, numRows, 2).setValues(rowArr);
+    rowNum += numRows + 1;
+  });
+
+  updateTicketOddsSheet(ticketOddsSheet, gamePrize, prizeTiersArr);
+
+  pause();
+
+  return;
 }
 
 const Scratch = (function () {
   function main() {
-    // "https://www.masslottery.com/api/v1/games";
-    // "https://www.masslottery.com/api/v1/instant-game-prizes?gameID=420";
-    // SpreadsheetApp;
-    // UrlFetchApp;
-    // JSON;
-
     const ss = SpreadsheetApp.openById(
       "1cY4AgTl_6rpNkk49CqgwUOHo0iD2v-HsPPmHov_Dm3w"
     );
-    let httpResponse = UrlFetchApp.fetch(
-      "https://www.masslottery.com/api/v1/games"
-    );
-    let contentStr = httpResponse.getContentText();
-    const contentJson = <Array<Game>>JSON.parse(contentStr);
-    const scratchGames = contentJson.filter(function (game) {
-      return game.gameType.toUpperCase() === "SCRATCH";
-    });
-
-    // const sheets = ss.getSheets();
-    const sheetName = scratchGames[0].name;
-    let sheet = ss.getSheetByName(sheetName);
-
-    if (!sheet) {
-      sheet = ss.insertSheet();
-      sheet.setName(sheetName);
+    const scratchGames = getScratchGames();
+    const ticketOddsSheet = setupSheets(ss, scratchGames);
+    if (!ticketOddsSheet) {
+      throw "Ticket Odds sheet not available";
     }
 
-    // ! delay before making more server requests
-    Utilities.sleep(1000);
-    httpResponse = UrlFetchApp.fetch(
-      "https://www.masslottery.com/api/v1/instant-game-prizes?gameID=" +
-        scratchGames[0].id
-    );
-    contentStr = httpResponse.getContentText();
-    const gamePrize = <GamePrize>JSON.parse(contentStr);
-    const gamePrizeArr2 = Object.entries(gamePrize);
-    sheet.clearContents();
-    sheet.getRange(1, 1, 6, 2).setValues(gamePrizeArr2.slice(0, 6));
-    sheet.getRange(7, 1, 1).setValue(gamePrizeArr2[6][0]);
+    scratchGames.forEach((game) => processTicket(game, ss, ticketOddsSheet));
 
-    let rowNum = 7;
-    (gamePrizeArr2[6][1] as Array<string>).forEach(function (row) {
-      const rowArr = Object.entries(row);
-      const numRows = rowArr.length;
-      sheet?.getRange(rowNum + 1, 3, numRows, 2).setValues(rowArr);
-      rowNum += numRows + 1;
-    });
-
-    // ! delay before making more server requests
-    Utilities.sleep(5000);
-
-    // todo: delete sheets for inactive games
     return;
   }
 
